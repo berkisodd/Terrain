@@ -1,0 +1,864 @@
+<title>schedule — contribution terrain</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#f4f1ea;
+    --plate:#fbfaf6;
+    --line:#e0d9c8;
+    --ink:#2b2a25;
+    --muted:#8b8474;
+    --panel:rgba(255,255,255,.94);
+    --accent:#216e39;
+    --peak:#b2541f;
+  }
+  :root[data-theme="dark"]{
+    --ground:#14140f;
+    --plate:#1c1c15;
+    --line:#2f2f24;
+    --ink:#eeeadc;
+    --muted:#9a927c;
+    --panel:rgba(24,24,18,.94);
+    --accent:#5fd488;
+    --peak:#e29257;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#14140f; --plate:#1c1c15; --line:#2f2f24; --ink:#eeeadc;
+      --muted:#9a927c; --panel:rgba(24,24,18,.94); --accent:#5fd488; --peak:#e29257;
+    }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:var(--ground); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  .mono{ font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; font-variant-numeric:tabular-nums; }
+
+  /* ---------- header + stats ---------- */
+  #topbar{ position:fixed; top:16px; left:18px; right:18px; z-index:5; pointer-events:none; }
+  #brand h1{ margin:0; font-size:15px; font-weight:700; letter-spacing:-.01em; }
+  #brand p{ margin:2px 0 0; font-size:11.5px; color:var(--muted); }
+  #stats{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; pointer-events:auto; }
+  .stat-chip{ display:flex; align-items:baseline; gap:7px; background:var(--panel); border:1px solid var(--line);
+    backdrop-filter:blur(8px); border-radius:9px; padding:7px 11px; font-size:12px; }
+  .stat-chip .k{ color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+  .stat-chip .v{ font-weight:700; }
+  .stat-chip.is-peak .v{ color:var(--peak); }
+  .stat-chip.is-low .v{ color:var(--muted); }
+  .stat-chip.is-total .v{ color:var(--accent); }
+  .stat-chip.clickable{ cursor:pointer; }
+  .stat-chip.clickable:hover{ border-color:var(--accent); }
+
+  /* ---------- scene ---------- */
+  #scene{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #terrain-canvas{ display:block; touch-action:none; cursor:grab; outline:none; }
+  #terrain-canvas.grabbing{ cursor:grabbing; }
+  #terrain-canvas.over-day{ cursor:pointer; }
+
+  #markers{ position:fixed; inset:0; pointer-events:none; z-index:3; }
+  .marker{ position:absolute; transform:translate(-50%,-100%); white-space:nowrap;
+    background:var(--panel); border:1px solid var(--line); backdrop-filter:blur(8px);
+    border-radius:8px; padding:5px 9px; font-size:11px; line-height:1.25; }
+  .marker b{ display:block; font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
+  .marker.peak b{ color:var(--peak); }
+  .marker.low b{ color:var(--muted); }
+  .marker .sub{ color:var(--muted); }
+
+  #tooltip{ position:fixed; z-index:6; pointer-events:none; opacity:0; transition:opacity .12s;
+    background:var(--panel); border:1px solid var(--line); backdrop-filter:blur(8px);
+    border-radius:8px; padding:6px 10px; font-size:11.5px; transform:translate(-50%,-140%); }
+  #tooltip.show{ opacity:1; }
+
+  /* ---------- bottom control bar ---------- */
+  #controls{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:5;
+    display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--line);
+    backdrop-filter:blur(10px); border-radius:999px; padding:7px 8px; }
+  #controls button{ font:inherit; font-size:12px; color:var(--ink); background:transparent;
+    border:none; border-radius:999px; padding:8px 14px; cursor:pointer; }
+  #controls button:hover{ background:var(--line); }
+  #controls .sep{ width:1px; height:22px; background:var(--line); }
+  .switch{ display:flex; align-items:center; gap:9px; padding:0 12px 0 6px; }
+  .switch span{ font-size:11.5px; color:var(--muted); }
+  #toggle{ width:42px; height:24px; border-radius:999px; background:var(--line); position:relative;
+    border:none; padding:0; cursor:pointer; flex:none; }
+  #toggle .knob{ position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);
+    transition:transform .2s cubic-bezier(.4,0,.2,1); }
+  #toggle.on{ background:var(--accent); }
+  #toggle.on .knob{ transform:translateX(18px); }
+
+  #hint{ position:fixed; bottom:72px; left:50%; transform:translateX(-50%); z-index:4;
+    font-size:11px; color:var(--muted); pointer-events:none; }
+
+  /* ---------- 2D grid view ---------- */
+  #flatgrid{ position:fixed; inset:0; z-index:2; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:20px;
+    opacity:0; transform:scale(.94); pointer-events:none;
+    transition:opacity .34s cubic-bezier(.32,.72,0,1), transform .34s cubic-bezier(.32,.72,0,1); }
+  #flatgrid.show{ opacity:1; transform:scale(1); pointer-events:auto; }
+  .flat-wrap{ display:flex; gap:10px; align-items:flex-start;
+    max-width:96vw; overflow-x:auto; padding:14px 8px; }
+  .dow-col{ display:flex; flex-direction:column; gap:10px; }
+  .dow-col span{ font-size:11px; color:var(--muted); height:clamp(50px,15vw,88px);
+    display:flex; align-items:center; }
+  .flat-cells{ display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,auto); gap:10px; }
+  .flat-cell{ position:relative; width:clamp(50px,15vw,88px); height:clamp(50px,15vw,88px);
+    border-radius:13px; border:1px solid var(--line); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; font-weight:700; color:#0d3b1e;
+    transition:transform .14s ease; }
+  .flat-cell:hover{ transform:translateY(-2px); }
+  .flat-cell:active{ transform:scale(.93); }
+  .flat-cell.light-text{ color:#f2fbf4; }
+  .flat-cell.empty{ background:transparent !important; border-style:dashed; opacity:.4;
+    cursor:default; color:var(--muted); font-weight:400; }
+  .flat-cell.empty:hover{ transform:none; }
+  .flat-cell.selected{ outline:3px solid var(--accent); outline-offset:2px; }
+  .flat-cell .tag{ position:absolute; top:-8px; left:50%; transform:translateX(-50%);
+    font-size:8.5px; text-transform:uppercase; letter-spacing:.05em; font-weight:700;
+    background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:2px 6px; }
+  .flat-cell .tag.peak{ color:var(--peak); }
+  .flat-cell .tag.low{ color:var(--muted); }
+
+  /* ---------- detail panel ---------- */
+  #panel{ position:fixed; top:0; right:0; height:100%; width:310px; max-width:82vw; z-index:7;
+    background:var(--panel); backdrop-filter:blur(14px); border-left:1px solid var(--line);
+    transform:translateX(100%); transition:transform .3s cubic-bezier(.32,.72,0,1);
+    padding:22px 20px; overflow-y:auto; }
+  #panel.open{ transform:translateX(0); }
+  #panel .close{ position:absolute; top:16px; right:16px; width:28px; height:28px; border-radius:8px;
+    border:1px solid var(--line); background:transparent; color:var(--muted); font-size:15px; cursor:pointer; }
+  #panel .date{ font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 4px; }
+  #panel .day{ font-size:20px; font-weight:700; margin:0 0 6px; letter-spacing:-.01em; }
+  #panel .rank{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; margin:0 0 16px; }
+  #panel .rank.peak{ color:var(--peak); }
+  #panel .rank.low{ color:var(--muted); }
+  #panel .rank.mid{ color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0; font-size:11.5px; }
+  #panel .stats-row{ display:flex; gap:10px; margin-bottom:18px; }
+  #panel .stat{ flex:1; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  #panel .stat .n{ font-size:20px; font-weight:700; }
+  #panel .stat .k{ font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
+  #panel .stat.commits .n{ color:var(--accent); }
+  #panel .loglabel{ font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 0 8px; }
+  #panel ul{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
+  #panel li{ font-size:12.5px; line-height:1.4; padding-bottom:7px; border-bottom:1px solid var(--line); }
+  #panel li:last-child{ border-bottom:none; }
+  #panel .empty{ font-size:12.5px; color:var(--muted); }
+
+  @media (max-width:720px){
+    #stats{ gap:6px; }
+    .stat-chip{ padding:6px 9px; font-size:11px; }
+    .marker{ font-size:10px; padding:4px 7px; }
+    #panel{ top:auto; bottom:0; left:0; right:0; width:100%; max-width:100%; height:auto; max-height:70vh;
+      border-left:none; border-top:1px solid var(--line); border-radius:18px 18px 0 0;
+      transform:translateY(100%); }
+    #panel.open{ transform:translateY(0); }
+    #hint{ font-size:10.5px; text-align:center; width:100%; }
+  }
+</style>
+
+<div id="scene">
+  <canvas id="terrain-canvas" tabindex="0" aria-label="3D contribution terrain. Use arrow keys to rotate."></canvas>
+</div>
+
+<div id="markers"></div>
+<div id="tooltip"></div>
+
+<div id="topbar">
+  <div id="brand">
+    <h1 id="brand-repo">—</h1>
+    <p class="mono" id="brand-range">—</p>
+  </div>
+  <div id="stats">
+    <div class="stat-chip is-peak clickable" id="chip-peak">
+      <span class="k">Most</span><span class="v mono" id="chip-peak-v">—</span>
+    </div>
+    <div class="stat-chip is-low clickable" id="chip-low">
+      <span class="k">Least</span><span class="v mono" id="chip-low-v">—</span>
+    </div>
+    <div class="stat-chip is-total">
+      <span class="k">Total</span><span class="v mono" id="chip-total-v">—</span>
+    </div>
+    <div class="stat-chip">
+      <span class="k">Active</span><span class="v mono" id="chip-active-v">—</span>
+    </div>
+    <div class="stat-chip is-stamp">
+      <span class="k">Updated</span><span class="v mono" id="chip-updated-v">—</span>
+    </div>
+  </div>
+</div>
+
+<div id="flatgrid">
+  <div class="flat-wrap">
+    <div class="dow-col">
+      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+    </div>
+    <div class="flat-cells" id="flat-cells"></div>
+  </div>
+</div>
+
+<div id="hint">drag to rotate · scroll to zoom · click a day for details</div>
+
+<div id="controls">
+  <button id="btn-view">▦ Grid view</button>
+  <button id="btn-reset">⟲ Reset view</button>
+  <div class="sep"></div>
+  <div class="switch">
+    <span>Rugged</span>
+    <button id="toggle" aria-pressed="false" aria-label="Toggle rugged terrain"><span class="knob"></span></button>
+  </div>
+</div>
+
+<div id="panel">
+  <button class="close" id="panel-close" aria-label="Close">&times;</button>
+  <p class="date mono" id="panel-date">—</p>
+  <p class="day" id="panel-day">Select a day</p>
+  <p class="rank" id="panel-rank"></p>
+  <div class="stats-row">
+    <div class="stat commits"><div class="n mono" id="panel-commits">–</div><div class="k">commits</div></div>
+    <div class="stat"><div class="n mono" id="panel-prs">–</div><div class="k">PRs merged</div></div>
+  </div>
+  <p class="loglabel">Activity</p>
+  <ul id="panel-list"></ul>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =========================================================================
+     ==DATA-START==
+     Everything between the DATA markers is regenerated by the daily refresh.
+     One entry per calendar day in the range, including days with no commits.
+     The calendar layout below is derived from these dates, so the grid grows
+     on its own as history accumulates — nothing here is position-dependent.
+     ========================================================================= */
+  var REPO = "berkisodd/schedule";
+  var GENERATED_AT = "2026-07-27";
+  var DATA = [
+    {date:"2026-07-16", commits:4,  prs:0,  msgs:["Create index.html","Create schedule.html","Create login.html","Initial commit"]},
+    {date:"2026-07-17", commits:0,  prs:0,  msgs:[]},
+    {date:"2026-07-18", commits:27, prs:0,  msgs:["Create share.html","Create service-worker.js","Update schedule.html","Update login.html","Update share.html","+22 more updates"]},
+    {date:"2026-07-19", commits:18, prs:0,  msgs:["Update schedule.html","Update login.html","Update service-worker.js","+15 more updates"]},
+    {date:"2026-07-20", commits:16, prs:0,  msgs:["Update schedule.html","Update login.html","Update service-worker.js","+13 more updates"]},
+    {date:"2026-07-21", commits:8,  prs:0,  msgs:["Implement theme and accent color features","Implement connection status UI for Firestore","Enhance responsive design and UI stability","+5 more updates"]},
+    {date:"2026-07-22", commits:2,  prs:1,  msgs:["Add promote/demote admin controls to the Users tab","Fix maintenance-gate logout button being off-screen on mobile"]},
+    {date:"2026-07-23", commits:12, prs:12, msgs:["Fix announcement banner hiding behind header on iOS (#2)","Open a user's profile from the admin Users tab (#3)","Let admins see full private profiles (#4)","Fix false \"Can't reach server\" on login (#5)","+8 more merged PRs"]},
+    {date:"2026-07-24", commits:6,  prs:6,  msgs:["Add v2.6.1 to the login page changelog (#14)","Add custom profile picture upload (#15)","Show an uploading animation while a new avatar saves (#16)","+3 more merged PRs"]},
+    {date:"2026-07-25", commits:7,  prs:6,  msgs:["Show the upload animation where it can actually be seen (#20)","Add falling leaves to the Forest theme (#21)","Update LICENSE","+4 more merged PRs"]},
+    {date:"2026-07-26", commits:4,  prs:4,  msgs:["Add support for rotating / A-B day schedules (#26)","Add Shared Calendars: see friends' schedules in People (#27)","Fix the Save button being hidden behind the phone tab bar (#28)","Give Shared Calendars its own spot instead of living inside People (#29)"]},
+    {date:"2026-07-27", commits:1,  prs:1,  msgs:["Add a scannable QR code to the share link (#30)"]}
+  ];
+  /* ==DATA-END== */
+
+  /* ---- derive the calendar layout from the dates (UTC, Sunday-start weeks) ---- */
+  var DAYS = 7;
+  var DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var MS_DAY = 86400000;
+
+  function parseDay(s){
+    var p = s.split('-');
+    return Date.UTC(+p[0], +p[1]-1, +p[2]);
+  }
+
+  DATA.sort(function(a,b){ return parseDay(a.date)-parseDay(b.date); });
+  var firstMs = parseDay(DATA[0].date);
+  // back up to the Sunday on or before the first day so weeks line up like GitHub's graph
+  var gridStart = firstMs - new Date(firstMs).getUTCDay()*MS_DAY;
+
+  var PLACEMENT = DATA.map(function(day){
+    var offset = Math.round((parseDay(day.date)-gridStart)/MS_DAY);
+    return { w: Math.floor(offset/DAYS), d: offset%DAYS, day: day };
+  });
+  var WEEKS = PLACEMENT.reduce(function(m,p){ return Math.max(m, p.w); }, 0) + 1;
+
+  var CELLS = new Array(WEEKS*DAYS).fill(null);
+  PLACEMENT.forEach(function(p){
+    var dt = new Date(parseDay(p.day.date));
+    var idx = p.w*DAYS + p.d;
+    p.idx = idx;
+    CELLS[idx] = {
+      idx: idx, w:p.w, d:p.d, date:p.day.date,
+      label: DAY_NAMES[dt.getUTCDay()],
+      commits: p.day.commits, prs: p.day.prs, msgs: p.day.msgs,
+      short: MONTH_NAMES[dt.getUTCMonth()] + " " + dt.getUTCDate()
+    };
+  });
+
+  var realCells = CELLS.filter(Boolean);
+  var MAX_C = realCells.reduce(function(m,c){ return Math.max(m,c.commits); }, 0);
+  var peakCell = realCells.reduce(function(a,b){ return b.commits>a.commits ? b : a; });
+  var lowCell  = realCells.reduce(function(a,b){ return b.commits<a.commits ? b : a; });
+  var rankDesc = realCells.slice().sort(function(a,b){ return b.commits-a.commits; });
+  function rankOf(cell){ return rankDesc.indexOf(cell)+1; }
+
+  var totalCommits = realCells.reduce(function(s,c){ return s+c.commits; }, 0);
+  var activeDays = realCells.filter(function(c){ return c.commits>0; }).length;
+  var firstCell = CELLS[PLACEMENT[0].idx], lastCell = CELLS[PLACEMENT[PLACEMENT.length-1].idx];
+
+  document.getElementById('brand-repo').textContent = REPO.replace('/', ' / ');
+  document.getElementById('brand-range').textContent =
+    'contribution terrain · ' + firstCell.short + '–' + lastCell.short +
+    ', ' + new Date(parseDay(lastCell.date)).getUTCFullYear();
+  document.getElementById('chip-peak-v').textContent = peakCell.short + ' · ' + peakCell.commits;
+  document.getElementById('chip-low-v').textContent = lowCell.short + ' · ' + lowCell.commits;
+  document.getElementById('chip-total-v').textContent = totalCommits + ' commits';
+  document.getElementById('chip-active-v').textContent = activeDays + ' / ' + realCells.length + ' days';
+  (function(){
+    var g = new Date(parseDay(GENERATED_AT));
+    document.getElementById('chip-updated-v').textContent =
+      MONTH_NAMES[g.getUTCMonth()] + ' ' + g.getUTCDate();
+  })();
+  document.title = REPO.split('/')[1] + ' — contribution terrain';
+
+  /* ================= height field ================= */
+  var PADX = 1, PADY = 1, SS = 4;              // chunky voxels: 4x4 per day
+  var RW = WEEKS + PADX*2, RD = DAYS + PADY*2;
+  var GX = RW*SS, GY = RD*SS;
+  var maxRaw = Math.pow(MAX_C, 0.62);
+  var MIN_H = 0.1;                              // zero-commit days stay visible + clickable
+
+  function makeArr(w,h,fill){ var a=new Array(w); for(var x=0;x<w;x++){ a[x]=new Array(h).fill(fill); } return a; }
+
+  var baseVal = makeArr(RW,RD,0);
+  for(var w2=0; w2<WEEKS; w2++){
+    for(var d2=0; d2<DAYS; d2++){
+      var c0 = CELLS[w2*DAYS+d2];
+      baseVal[w2+PADX][d2+PADY] = (c0 && c0.commits>0) ? Math.pow(c0.commits,0.62)/maxRaw : 0;
+    }
+  }
+
+  function bilinear(u,v){
+    var fu=u-0.5, fv=v-0.5;
+    var i0=Math.floor(fu), j0=Math.floor(fv);
+    var tI=fu-i0, tJ=fv-j0, i1=i0+1, j1=j0+1;
+    i0=Math.max(0,Math.min(RW-1,i0)); i1=Math.max(0,Math.min(RW-1,i1));
+    j0=Math.max(0,Math.min(RD-1,j0)); j1=Math.max(0,Math.min(RD-1,j1));
+    var a=baseVal[i0][j0], b=baseVal[i1][j0], c=baseVal[i0][j1], d=baseVal[i1][j1];
+    return (a+(b-a)*tI) + ((c+(d-c)*tI)-(a+(b-a)*tI))*tJ;
+  }
+
+  var smoothH = makeArr(GX,GY,0);
+  for(var sx=0; sx<GX; sx++){
+    for(var sy=0; sy<GY; sy++){ smoothH[sx][sy] = bilinear((sx+0.5)/SS, (sy+0.5)/SS); }
+  }
+  (function blur(passes){
+    for(var p=0;p<passes;p++){
+      var out = makeArr(GX,GY,0);
+      for(var x=0;x<GX;x++){
+        for(var y=0;y<GY;y++){
+          var sum=0,n=0;
+          for(var dx=-1;dx<=1;dx++){ for(var dy=-1;dy<=1;dy++){
+            var xx=x+dx, yy=y+dy;
+            if(xx>=0&&xx<GX&&yy>=0&&yy<GY){ sum+=smoothH[xx][yy]; n++; }
+          }}
+          out[x][y]=sum/n;
+        }
+      }
+      smoothH = out;
+    }
+  })(2);
+
+  function hash(x,y,seed){
+    var s = Math.sin(x*127.1 + y*311.7 + seed*74.7)*43758.5453;
+    return s - Math.floor(s);
+  }
+  var detailH = makeArr(GX,GY,0);
+  for(var dx2=0; dx2<GX; dx2++){
+    for(var dy2=0; dy2<GY; dy2++){
+      var base = smoothH[dx2][dy2];
+      detailH[dx2][dy2] = Math.max(0, base + (hash(dx2,dy2,1)-0.5)*0.06 + (hash(dx2,dy2,2)-0.5)*0.5*Math.pow(base,0.8));
+    }
+  }
+
+  // which day owns each voxel (-1 = surrounding ground)
+  var owner = makeArr(GX,GY,-1);
+  PLACEMENT.forEach(function(p){
+    var idx = p.w*DAYS+p.d;
+    for(var a=0;a<SS;a++){
+      for(var b=0;b<SS;b++){ owner[(p.w+PADX)*SS+a][(p.d+PADY)*SS+b] = idx; }
+    }
+  });
+
+  function heightAt(field,x,y){
+    var h = field[x][y]*HEIGHT_UNITS;
+    if(owner[x][y] >= 0) h = Math.max(h, MIN_H);
+    return h;
+  }
+  function cellTopHeight(field, cell){
+    var top = 0;
+    for(var a=0;a<SS;a++){
+      for(var b=0;b<SS;b++){
+        top = Math.max(top, heightAt(field,(cell.w+PADX)*SS+a,(cell.d+PADY)*SS+b));
+      }
+    }
+    return top;
+  }
+
+  /* ================= camera ================= */
+  var HEIGHT_UNITS = 5;
+  var theta = 42, phi = 34, userZoom = 1;
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+  function project(X,Yh,Z){
+    var th=theta*Math.PI/180, ph=phi*Math.PI/180;
+    var x1 = X*Math.cos(th) - Z*Math.sin(th);
+    var z1 = X*Math.sin(th) + Z*Math.cos(th);
+    var y2 = Yh*Math.cos(ph) - z1*Math.sin(ph);
+    return { sx:x1, sy:-y2 };
+  }
+
+  // unit-cell corners, clockwise from above: NW, NE, SE, SW
+  var CORNERS = [[-0.5,-0.5],[0.5,-0.5],[0.5,0.5],[-0.5,0.5]];
+  // side face i spans CORNERS[i] -> CORNERS[i+1]; fixed world-space shading
+  var FACE_MULT = [0.86, 0.66, 0.56, 0.76];   // N, E, S, W
+
+  // a side face is toward the viewer when its projected quad winds negative
+  function facesViewer(p0,p1,p2,p3){
+    return (p0.sx*p1.sy - p1.sx*p0.sy)
+         + (p1.sx*p2.sy - p2.sx*p1.sy)
+         + (p2.sx*p3.sy - p3.sx*p2.sy)
+         + (p3.sx*p0.sy - p0.sx*p3.sy) < 0;
+  }
+
+  var totalCols = GX*GY;
+  var colIndex = new Array(totalCols);
+  for(var ci=0; ci<totalCols; ci++) colIndex[ci]=ci;
+  var depthCache = new Float32Array(totalCols);
+
+  /* ================= color ================= */
+  var STOPS = [
+    {t:0.0, c:[228,232,226]},
+    {t:0.16,c:[172,224,181]},
+    {t:0.40,c:[64,196,99]},
+    {t:0.68,c:[48,161,78]},
+    {t:1.0, c:[33,110,57]},
+    {t:1.3, c:[20,82,42]}
+  ];
+  function lerpColor(t){
+    t = clamp(t,0,1.3);
+    for(var i=0;i<STOPS.length-1;i++){
+      var a=STOPS[i], b=STOPS[i+1];
+      if(t>=a.t && t<=b.t){
+        var f=(t-a.t)/(b.t-a.t||1);
+        return [Math.round(a.c[0]+(b.c[0]-a.c[0])*f),
+                Math.round(a.c[1]+(b.c[1]-a.c[1])*f),
+                Math.round(a.c[2]+(b.c[2]-a.c[2])*f)];
+      }
+    }
+    return STOPS[STOPS.length-1].c;
+  }
+  function rgbStr(rgb,mul){
+    return 'rgb('+Math.min(255,Math.round(rgb[0]*mul))+','+Math.min(255,Math.round(rgb[1]*mul))+','+Math.min(255,Math.round(rgb[2]*mul))+')';
+  }
+
+  /* ================= canvas ================= */
+  var canvas = document.getElementById('terrain-canvas');
+  var ctx = canvas.getContext('2d');
+  var idCanvas = document.createElement('canvas');
+  var idCtx = idCanvas.getContext('2d',{ willReadFrequently:true });
+  var dpr = Math.max(1, Math.min(2, window.devicePixelRatio||1));
+
+  function sizeCanvases(){
+    var cssW = Math.min(window.innerWidth*0.97, 1500);
+    var cssH = Math.min(window.innerHeight*0.9, 950);
+    [canvas, idCanvas].forEach(function(c){
+      c.style.width=cssW+'px'; c.style.height=cssH+'px';
+      c.width=Math.round(cssW*dpr); c.height=Math.round(cssH*dpr);
+    });
+  }
+  sizeCanvases();
+
+  var lastFit = null;
+  function computeFit(){
+    var field = mode==='detail' ? detailH : smoothH;
+    var minSx=Infinity,maxSx=-Infinity,minSy=Infinity,maxSy=-Infinity;
+    function add(X,Y,Z){
+      var p=project(X,Y,Z);
+      minSx=Math.min(minSx,p.sx); maxSx=Math.max(maxSx,p.sx);
+      minSy=Math.min(minSy,p.sy); maxSy=Math.max(maxSy,p.sy);
+    }
+    // ground plate corners
+    [-GX/2,GX/2].forEach(function(X){ [-GY/2,GY/2].forEach(function(Z){ add(X,0,Z); }); });
+    // actual peaks (plus marker headroom) rather than a full-height box
+    realCells.forEach(function(cell){
+      var cX=(cell.w+PADX)*SS+SS/2-GX/2, cZ=(cell.d+PADY)*SS+SS/2-GY/2;
+      add(cX, cellTopHeight(field,cell)+2.2, cZ);
+    });
+    var cssW=parseFloat(canvas.style.width), cssH=parseFloat(canvas.style.height);
+    var padX=24, padY=matchTight() ? 96 : 24;
+    var scale = Math.min((cssW-padX*2)/(maxSx-minSx), (cssH-padY*2)/(maxSy-minSy)) * userZoom;
+    return { scale:scale, ox:cssW/2-(minSx+maxSx)/2*scale, oy:cssH/2-(minSy+maxSy)/2*scale };
+  }
+  function matchTight(){ return window.innerWidth > 720; }
+
+  function applyTransform(c, w, h, fit){
+    c.setTransform(1,0,0,1,0,0);
+    c.clearRect(0,0,w,h);
+    var s = fit.scale*dpr;
+    c.setTransform(s,0,0,s, fit.ox*dpr, fit.oy*dpr);
+  }
+
+  function quad(c,p1,p2,p3,p4,color){
+    c.beginPath();
+    c.moveTo(p1.sx,p1.sy); c.lineTo(p2.sx,p2.sy); c.lineTo(p3.sx,p3.sy); c.lineTo(p4.sx,p4.sy);
+    c.closePath(); c.fillStyle=color; c.fill();
+  }
+
+  function drawFloor(){
+    var plate = getComputedStyle(document.documentElement).getPropertyValue('--plate').trim() || '#fff';
+    var line  = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#e0d9c8';
+    var c=[[-GX/2,-GY/2],[GX/2,-GY/2],[GX/2,GY/2],[-GX/2,GY/2]];
+    ctx.beginPath();
+    c.forEach(function(p,i){ var pr=project(p[0],0,p[1]); if(i===0) ctx.moveTo(pr.sx,pr.sy); else ctx.lineTo(pr.sx,pr.sy); });
+    ctx.closePath();
+    ctx.fillStyle = plate; ctx.fill();
+    ctx.strokeStyle = line; ctx.lineWidth = 1/lastFit.scale; ctx.stroke();
+
+    // faint outline of each real day's footprint so the calendar structure reads
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1/lastFit.scale;
+    PLACEMENT.forEach(function(p){
+      var x0=(p.w+PADX)*SS-GX/2, x1=x0+SS, z0=(p.d+PADY)*SS-GY/2, z1=z0+SS;
+      var A=project(x0,0,z0),B=project(x1,0,z0),C=project(x1,0,z1),D=project(x0,0,z1);
+      ctx.beginPath();
+      ctx.moveTo(A.sx,A.sy); ctx.lineTo(B.sx,B.sy); ctx.lineTo(C.sx,C.sy); ctx.lineTo(D.sx,D.sy);
+      ctx.closePath(); ctx.stroke();
+    });
+  }
+
+  function drawPin(cell, field, kind){
+    var cX=(cell.w+PADX)*SS+SS/2-GX/2, cZ=(cell.d+PADY)*SS+SS/2-GY/2;
+    var h = cellTopHeight(field, cell);
+    var bottom = project(cX,h,cZ), top = project(cX,h+PIN_H[kind],cZ);
+    var color = getComputedStyle(document.documentElement)
+      .getPropertyValue(kind==='peak' ? '--peak' : '--muted').trim();
+    ctx.save();
+    ctx.strokeStyle=color; ctx.lineWidth=1.6/lastFit.scale;
+    ctx.beginPath(); ctx.moveTo(bottom.sx,bottom.sy); ctx.lineTo(top.sx,top.sy); ctx.stroke();
+    ctx.fillStyle=color;
+    ctx.beginPath(); ctx.arc(top.sx,top.sy, 3.2/lastFit.scale, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSelectionRing(field){
+    if(selected==null) return;
+    var cell = CELLS[selected]; if(!cell) return;
+    var cX=(cell.w+PADX)*SS+SS/2-GX/2, cZ=(cell.d+PADY)*SS+SS/2-GY/2;
+    var h = cellTopHeight(field, cell)+0.12;
+    var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    ctx.save();
+    ctx.strokeStyle=accent; ctx.lineWidth=2.2/lastFit.scale;
+    ctx.beginPath();
+    for(var a=0;a<=28;a++){
+      var ang=a/28*Math.PI*2;
+      var pr=project(cX+Math.cos(ang)*SS*0.66, h, cZ+Math.sin(ang)*SS*0.66);
+      if(a===0) ctx.moveTo(pr.sx,pr.sy); else ctx.lineTo(pr.sx,pr.sy);
+    }
+    ctx.closePath(); ctx.stroke(); ctx.restore();
+  }
+
+  function render(){
+    var fit = computeFit();
+    lastFit = fit;
+    applyTransform(ctx, canvas.width, canvas.height, fit);
+    applyTransform(idCtx, idCanvas.width, idCanvas.height, fit);
+
+    drawFloor();
+
+    var field = mode==='detail' ? detailH : smoothH;
+    var th=theta*Math.PI/180, sinTh=Math.sin(th), cosTh=Math.cos(th);
+    for(var i=0;i<totalCols;i++){
+      var xx=i%GX, yy=(i/GX)|0;
+      depthCache[i] = (xx-GX/2)*sinTh + (yy-GY/2)*cosTh;
+    }
+    colIndex.sort(function(a,b){ return depthCache[a]-depthCache[b]; });
+
+    var top=[], gnd=[];
+    for(var k=0;k<totalCols;k++){
+      var ci=colIndex[k], x=ci%GX, y=(ci/GX)|0;
+      var h = heightAt(field,x,y);
+      if(h < 0.005) continue;
+      var own = owner[x][y];
+      var rgb = lerpColor(field[x][y]);
+      var lift = (own>=0 && own===hovered) ? 1.16 : 1;
+      var X=x-GX/2, Z=y-GY/2;
+      var idCol = own>=0 ? 'rgb('+(own+1)+',0,0)' : null;
+
+      for(var ic=0; ic<4; ic++){
+        top[ic] = project(X+CORNERS[ic][0], h, Z+CORNERS[ic][1]);
+        gnd[ic] = project(X+CORNERS[ic][0], 0, Z+CORNERS[ic][1]);
+      }
+
+      // side faces first, then the cap sits on top of them
+      for(var f=0; f<4; f++){
+        var a=f, b=(f+1)%4;
+        if(!facesViewer(top[a],top[b],gnd[b],gnd[a])) continue;
+        quad(ctx, top[a],top[b],gnd[b],gnd[a], rgbStr(rgb, FACE_MULT[f]*lift));
+        if(idCol) quad(idCtx, top[a],top[b],gnd[b],gnd[a], idCol);
+      }
+      quad(ctx, top[0],top[1],top[2],top[3], rgbStr(rgb,lift));
+      if(idCol) quad(idCtx, top[0],top[1],top[2],top[3], idCol);
+    }
+
+    drawPin(peakCell, field, 'peak');
+    drawPin(lowCell, field, 'low');
+    drawSelectionRing(field);
+    updateMarkers(field);
+  }
+
+  /* ================= most / least markers ================= */
+  var markersEl = document.getElementById('markers');
+  function plural(n){ return n===1 ? ' commit' : ' commits'; }
+  var peakMarker = document.createElement('div');
+  peakMarker.className = 'marker peak';
+  peakMarker.innerHTML = '<b>Most</b>'+peakCell.short+' · <span class="mono">'+peakCell.commits+'</span>'+plural(peakCell.commits);
+  var lowMarker = document.createElement('div');
+  lowMarker.className = 'marker low';
+  lowMarker.innerHTML = '<b>Least</b>'+lowCell.short+' · <span class="sub">'+
+    (lowCell.commits===0 ? 'no commits' : lowCell.commits+plural(lowCell.commits))+'</span>';
+  markersEl.appendChild(peakMarker);
+  markersEl.appendChild(lowMarker);
+
+  // pin heights are staggered so the two labels never collide
+  var PIN_H = { peak:1.7, low:0.7 };
+
+  function placeMarker(el, cell, field, kind){
+    var cX=(cell.w+PADX)*SS+SS/2-GX/2, cZ=(cell.d+PADY)*SS+SS/2-GY/2;
+    var p = project(cX, cellTopHeight(field,cell)+PIN_H[kind]+0.35, cZ);
+    var rect = canvas.getBoundingClientRect();
+    el.style.left = (rect.left + p.sx*lastFit.scale + lastFit.ox) + 'px';
+    el.style.top  = (rect.top  + p.sy*lastFit.scale + lastFit.oy) + 'px';
+  }
+  function updateMarkers(field){
+    placeMarker(peakMarker, peakCell, field, 'peak');
+    placeMarker(lowMarker, lowCell, field, 'low');
+    // if the two labels collide at this angle, drop the quieter one just clear of the other
+    lowMarker.style.transform = 'translate(-50%,-100%)';
+    var a=peakMarker.getBoundingClientRect(), b=lowMarker.getBoundingClientRect();
+    if(!(a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top)){
+      lowMarker.style.transform = 'translate(-50%,-100%) translateY(' + (a.bottom - b.top + 8) + 'px)';
+    }
+  }
+
+  /* ================= state + loop ================= */
+  var mode='smooth', selected=null, hovered=null;
+  var renderQueued=false;
+  function requestRender(){
+    if(renderQueued) return;
+    renderQueued=true;
+    requestAnimationFrame(function(){ renderQueued=false; render(); });
+  }
+  render();
+
+  window.addEventListener('resize', function(){ sizeCanvases(); render(); });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+  new MutationObserver(render).observe(document.documentElement,{ attributes:true, attributeFilter:['data-theme'] });
+
+  /* ================= panel ================= */
+  var panel=document.getElementById('panel');
+  var panelDate=document.getElementById('panel-date');
+  var panelDay=document.getElementById('panel-day');
+  var panelRank=document.getElementById('panel-rank');
+  var panelCommits=document.getElementById('panel-commits');
+  var panelPrs=document.getElementById('panel-prs');
+  var panelList=document.getElementById('panel-list');
+
+  function openPanelFor(idx){
+    var cell=CELLS[idx]; if(!cell) return;
+    selected=idx;
+    panelDate.textContent = cell.short + ', 2026';
+    panelDay.textContent = cell.label;
+    if(cell === peakCell){ panelRank.className='rank peak'; panelRank.textContent='★ Busiest day'; }
+    else if(cell === lowCell){ panelRank.className='rank low'; panelRank.textContent='Quietest day'; }
+    else { panelRank.className='rank mid'; panelRank.textContent='#'+rankOf(cell)+' busiest of '+realCells.length+' days'; }
+    panelCommits.textContent=cell.commits;
+    panelPrs.textContent=cell.prs;
+    panelList.innerHTML='';
+    if(cell.msgs.length===0){
+      panelList.innerHTML='<li class="empty">No commits this day.</li>';
+    } else {
+      cell.msgs.forEach(function(m){ var li=document.createElement('li'); li.textContent=m; panelList.appendChild(li); });
+    }
+    panel.classList.add('open');
+    markFlatSelected(idx);
+    render();
+  }
+  document.getElementById('panel-close').addEventListener('click', function(){
+    panel.classList.remove('open'); selected=null; render();
+  });
+
+  /* ================= 2D grid ================= */
+  var flatCellEls=[];
+  (function buildFlatGrid(){
+    var container=document.getElementById('flat-cells');
+    CELLS.forEach(function(cell, idx){
+      var div=document.createElement('div');
+      div.style.gridColumn = Math.floor(idx/DAYS)+1;
+      div.style.gridRow = (idx%DAYS)+1;
+      if(cell){
+        div.className='flat-cell';
+        var norm = cell.commits>0 ? Math.pow(cell.commits,0.62)/maxRaw : 0;
+        var rgb = lerpColor(norm);
+        div.style.background = rgbStr(rgb,1);
+        if(norm > 0.55) div.classList.add('light-text');
+        div.textContent = cell.commits;
+        div.title = cell.short + ' — ' + cell.commits + ' commit' + (cell.commits===1?'':'s');
+        if(cell===peakCell) div.insertAdjacentHTML('beforeend','<span class="tag peak">Most</span>');
+        if(cell===lowCell)  div.insertAdjacentHTML('beforeend','<span class="tag low">Least</span>');
+        div.addEventListener('click', function(){ openPanelFor(idx); });
+      } else {
+        div.className='flat-cell empty';
+      }
+      container.appendChild(div);
+      flatCellEls[idx]=div;
+    });
+  })();
+  function markFlatSelected(idx){
+    flatCellEls.forEach(function(el){ if(el) el.classList.remove('selected'); });
+    if(flatCellEls[idx]) flatCellEls[idx].classList.add('selected');
+  }
+
+  var sceneEl=document.getElementById('scene');
+  var flatGrid=document.getElementById('flatgrid');
+  var btnView=document.getElementById('btn-view');
+  var btnReset=document.getElementById('btn-reset');
+  var hintEl=document.getElementById('hint');
+  var view='terrain';
+  function setView(v){
+    view=v;
+    var flat = v==='flat';
+    flatGrid.classList.toggle('show', flat);
+    sceneEl.style.opacity = flat ? 0 : 1;
+    sceneEl.style.pointerEvents = flat ? 'none' : 'auto';
+    markersEl.style.display = flat ? 'none' : 'block';
+    btnReset.style.display = flat ? 'none' : '';
+    btnView.textContent = flat ? '⛰ 3D view' : '▦ Grid view';
+    hintEl.textContent = flat ? TOUCH.pick : TOUCH.terrain;
+  }
+  var coarse = window.matchMedia('(pointer: coarse)').matches;
+  var TOUCH = coarse
+    ? { terrain:'drag to rotate · pinch to zoom · tap a day for details', pick:'tap a day for details' }
+    : { terrain:'drag to rotate · scroll to zoom · click a day for details', pick:'click a day for details' };
+  hintEl.textContent = TOUCH.terrain;
+  sceneEl.style.transition='opacity .34s cubic-bezier(.32,.72,0,1)';
+  btnView.addEventListener('click', function(){ setView(view==='terrain' ? 'flat' : 'terrain'); });
+  btnReset.addEventListener('click', function(){ theta=42; phi=34; userZoom=1; render(); });
+
+  var toggleBtn=document.getElementById('toggle');
+  toggleBtn.addEventListener('click', function(){
+    var on=toggleBtn.classList.toggle('on');
+    toggleBtn.setAttribute('aria-pressed', on);
+    mode = on ? 'detail' : 'smooth';
+    render();
+  });
+
+  document.getElementById('chip-peak').addEventListener('click', function(){ openPanelFor(peakCell.idx); });
+  document.getElementById('chip-low').addEventListener('click', function(){ openPanelFor(lowCell.idx); });
+
+  /* ================= picking, rotate, zoom ================= */
+  var tooltip=document.getElementById('tooltip');
+
+  function pickAt(clientX, clientY){
+    var rect=canvas.getBoundingClientRect();
+    var px=(clientX-rect.left)*(idCanvas.width/rect.width);
+    var py=(clientY-rect.top)*(idCanvas.height/rect.height);
+    if(px<0||py<0||px>=idCanvas.width||py>=idCanvas.height) return -1;
+    var d=idCtx.getImageData(px,py,1,1).data;
+    if(d[3]===0) return -1;
+    var idx=d[0]-1;
+    return (idx>=0 && idx<CELLS.length && CELLS[idx]) ? idx : -1;
+  }
+
+  var pointers=new Map(), dragStart=null, dragged=false, lastPinch=null;
+  function pinchDist(){
+    var v=Array.from(pointers.values());
+    return Math.hypot(v[0].x-v[1].x, v[0].y-v[1].y);
+  }
+
+  canvas.addEventListener('pointerdown', function(e){
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.size===1){
+      dragStart={x:e.clientX,y:e.clientY,theta:theta,phi:phi};
+      dragged=false;
+      canvas.classList.add('grabbing');
+    } else if(pointers.size===2){ lastPinch=pinchDist(); }
+    tooltip.classList.remove('show');
+  });
+
+  canvas.addEventListener('pointermove', function(e){
+    if(!pointers.has(e.pointerId)){
+      if(e.pointerType==='mouse'){
+        var id=pickAt(e.clientX,e.clientY);
+        canvas.classList.toggle('over-day', id>=0);
+        if(id!==hovered){ hovered = id>=0 ? id : null; requestRender(); }
+        if(id>=0){
+          var c=CELLS[id];
+          tooltip.innerHTML='<b>'+c.short+'</b> · '+c.commits+' commit'+(c.commits===1?'':'s');
+          tooltip.style.left=e.clientX+'px';
+          tooltip.style.top=e.clientY+'px';
+          tooltip.classList.add('show');
+        } else { tooltip.classList.remove('show'); }
+      }
+      return;
+    }
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.size===2){
+      var d=pinchDist();
+      if(lastPinch) userZoom=clamp(userZoom*(d/lastPinch),0.55,2.8);
+      lastPinch=d; requestRender(); return;
+    }
+    if(dragStart){
+      var dx=e.clientX-dragStart.x, dy=e.clientY-dragStart.y;
+      if(Math.abs(dx)+Math.abs(dy)>6) dragged=true;
+      theta=dragStart.theta-dx*0.3;
+      phi=clamp(dragStart.phi+dy*0.22,12,80);
+      requestRender();
+    }
+  });
+
+  canvas.addEventListener('pointerleave', function(){
+    tooltip.classList.remove('show');
+    if(hovered!==null){ hovered=null; requestRender(); }
+  });
+
+  function endPointer(e){
+    var wasSingle = pointers.size===1;
+    pointers.delete(e.pointerId);
+    if(pointers.size===0){
+      canvas.classList.remove('grabbing');
+      if(wasSingle && dragStart && !dragged){
+        var id=pickAt(e.clientX,e.clientY);
+        if(id>=0) openPanelFor(id);
+      }
+      dragStart=null; lastPinch=null;
+    } else if(pointers.size===1){
+      var r=Array.from(pointers.values())[0];
+      dragStart={x:r.x,y:r.y,theta:theta,phi:phi};
+      dragged=true; lastPinch=null;
+    }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+
+  canvas.addEventListener('wheel', function(e){
+    e.preventDefault();
+    userZoom=clamp(userZoom*(1-e.deltaY*0.001),0.55,2.8);
+    requestRender();
+  },{ passive:false });
+
+  canvas.addEventListener('keydown', function(e){
+    var step = e.shiftKey ? 15 : 5;
+    if(e.key==='ArrowLeft'){ theta-=step; }
+    else if(e.key==='ArrowRight'){ theta+=step; }
+    else if(e.key==='ArrowUp'){ phi=clamp(phi+step,12,80); }
+    else if(e.key==='ArrowDown'){ phi=clamp(phi-step,12,80); }
+    else if(e.key==='+'||e.key==='='){ userZoom=clamp(userZoom*1.12,0.55,2.8); }
+    else if(e.key==='-'){ userZoom=clamp(userZoom/1.12,0.55,2.8); }
+    else return;
+    e.preventDefault();
+    requestRender();
+  });
+})();
+</script>
