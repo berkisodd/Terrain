@@ -165,6 +165,7 @@
 
 <div id="topbar">
   <div id="brand">
+    <a href="dashboard.html" style="font-size:11px;color:var(--muted);text-decoration:none;">&larr; all projects</a>
     <h1 id="brand-repo">—</h1>
     <p class="mono" id="brand-range">—</p>
   </div>
@@ -263,6 +264,41 @@
     {date:"2026-08-10", commits:0,  prs:0,  msgs:[]}
   ];
   /* ==DATA-END== */
+
+  /* ---- optional live mode: ?repo=owner/name fetches straight from GitHub ---- */
+  var ONE_DAY = 86400000;
+  function parseDayStr(s){ var p=s.split('-'); return Date.UTC(+p[0], +p[1]-1, +p[2]); }
+  function fetchLive(repo){
+    return fetch('https://api.github.com/repos/'+repo+'/commits?per_page=100', {headers:{Accept:'application/vnd.github+json'}})
+      .then(function(r){ if(!r.ok) throw new Error('GitHub API '+r.status); return r.json(); })
+      .then(function(commits){
+        var byDay = {};
+        commits.forEach(function(c){
+          var iso = (c.commit.author && c.commit.author.date) || c.commit.committer.date;
+          var day = iso.slice(0,10);
+          var subject = c.commit.message.split('\n')[0];
+          var isPR = /\(#\d+\)/.test(subject);
+          if(!byDay[day]) byDay[day] = { commits:0, prs:0, msgs:[] };
+          byDay[day].commits++;
+          if(isPR) byDay[day].prs++;
+          byDay[day].msgs.push(subject);
+        });
+        var days = Object.keys(byDay).sort();
+        if(days.length===0){ var t=new Date().toISOString().slice(0,10); byDay[t]={commits:0,prs:0,msgs:[]}; days=[t]; }
+        var first = parseDayStr(days[0]), last = parseDayStr(new Date().toISOString().slice(0,10));
+        var out = [];
+        for(var t2=first; t2<=last; t2+=ONE_DAY){
+          var ds = new Date(t2).toISOString().slice(0,10);
+          var rec = byDay[ds] || { commits:0, prs:0, msgs:[] };
+          var msgs = rec.msgs.slice(0,4);
+          if(rec.msgs.length>4) msgs.push('+'+(rec.msgs.length-4)+' more');
+          out.push({ date: ds, commits: rec.commits, prs: rec.prs, msgs: msgs });
+        }
+        return { data: out, generatedAt: new Date().toISOString().slice(0,10) };
+      });
+  }
+
+  function boot(){
 
   /* ---- derive the calendar layout from the dates (UTC, Sunday-start weeks) ---- */
   var DAYS = 7;
@@ -874,5 +910,24 @@
     e.preventDefault();
     requestRender();
   });
+
+  } // end boot()
+
+  var liveRepo = new URLSearchParams(location.search).get('repo');
+  if(liveRepo){
+    REPO = liveRepo;
+    document.getElementById('brand-repo').textContent = 'Loading ' + liveRepo + '…';
+    fetchLive(liveRepo).then(function(res){
+      DATA = res.data;
+      GENERATED_AT = res.generatedAt;
+      boot();
+    }).catch(function(err){
+      document.getElementById('brand-repo').textContent = liveRepo + ' — failed to load';
+      document.getElementById('brand-range').textContent = err.message;
+      console.error(err);
+    });
+  } else {
+    boot();
+  }
 })();
 </script>

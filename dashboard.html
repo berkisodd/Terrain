@@ -1,0 +1,110 @@
+<title>berkisodd — terrain dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#f4f1ea; --plate:#fbfaf6; --line:#e0d9c8; --ink:#2b2a25;
+    --muted:#8b8474; --accent:#216e39; --peak:#b2541f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --ground:#14140f; --plate:#1c1c15; --line:#2f2f24; --ink:#eeeadc;
+      --muted:#9a927c; --accent:#5fd488; --peak:#e29257; }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--ground); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  header{ padding:28px 24px 8px; }
+  header h1{ margin:0 0 4px; font-size:20px; letter-spacing:-.01em; }
+  header p{ margin:0; font-size:13px; color:var(--muted); }
+  #grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+    gap:14px; padding:20px 24px 40px; }
+  a.card{ display:block; background:var(--plate); border:1px solid var(--line); border-radius:14px;
+    padding:16px; text-decoration:none; color:inherit; transition:transform .15s ease, border-color .15s ease; }
+  a.card:hover{ transform:translateY(-2px); border-color:var(--accent); }
+  .card h2{ margin:0 0 3px; font-size:15px; font-weight:700; }
+  .card .desc{ font-size:12px; color:var(--muted); min-height:16px; margin-bottom:10px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mini{ display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr); gap:2px; height:56px; }
+  .mini i{ display:block; width:7px; height:7px; border-radius:2px; background:var(--line); }
+  .stat-row{ display:flex; justify-content:space-between; margin-top:10px; font-size:11px; color:var(--muted); }
+  .stat-row b{ color:var(--ink); font-variant-numeric:tabular-nums; }
+  .err{ font-size:11px; color:var(--muted); margin-top:10px; }
+</style>
+
+<header>
+  <h1>berkisodd — terrain dashboard</h1>
+  <p>Contribution terrain for every project. Click a card for the full 3D view.</p>
+</header>
+<div id="grid"></div>
+
+<script>
+(function(){
+  "use strict";
+  var REPOS = [
+    "Soundmap","handmesh","Schinex-","berk","math",
+    "serverstate","schedule","scs","Something-cool",
+    "Demo-notifications-test","Seemusic"
+  ];
+  var OWNER = "berkisodd";
+  var grid = document.getElementById('grid');
+
+  REPOS.forEach(function(name){
+    var card = document.createElement('a');
+    card.className = 'card';
+    card.href = 'index.html?repo=' + OWNER + '/' + encodeURIComponent(name);
+    card.innerHTML =
+      '<h2>' + name + '</h2>' +
+      '<div class="desc" data-role="desc">&nbsp;</div>' +
+      '<div class="mini" data-role="mini"></div>' +
+      '<div class="stat-row"><span>commits <b data-role="total">–</b></span>' +
+      '<span>active <b data-role="active">–</b></span></div>';
+    grid.appendChild(card);
+    loadRepo(OWNER, name, card);
+  });
+
+  function loadRepo(owner, name, card){
+    Promise.all([
+      fetch('https://api.github.com/repos/'+owner+'/'+name).then(function(r){ return r.ok ? r.json() : null; }),
+      fetch('https://api.github.com/repos/'+owner+'/'+name+'/commits?per_page=100', {headers:{Accept:'application/vnd.github+json'}})
+        .then(function(r){ return r.ok ? r.json() : []; })
+    ]).then(function(res){
+      var meta = res[0], commits = res[1];
+      var descEl = card.querySelector('[data-role="desc"]');
+      if(meta && meta.description) descEl.textContent = meta.description;
+
+      var byDay = {};
+      (commits||[]).forEach(function(c){
+        var iso = (c.commit.author && c.commit.author.date) || c.commit.committer.date;
+        var day = iso.slice(0,10);
+        byDay[day] = (byDay[day]||0) + 1;
+      });
+      var days = Object.keys(byDay);
+      var total = (commits||[]).length;
+      var max = days.reduce(function(m,d){ return Math.max(m, byDay[d]); }, 0);
+
+      var last63 = [];
+      var today = new Date(); today.setUTCHours(0,0,0,0);
+      for(var i=62;i>=0;i--){
+        var d = new Date(today.getTime() - i*86400000);
+        var ds = d.toISOString().slice(0,10);
+        last63.push(byDay[ds] || 0);
+      }
+      var miniEl = card.querySelector('[data-role="mini"]');
+      last63.forEach(function(n){
+        var i = document.createElement('i');
+        if(n>0){
+          var t = max ? n/max : 0;
+          i.style.background = 'color-mix(in srgb, var(--accent) ' + Math.round(20+t*80) + '%, var(--line))';
+        }
+        miniEl.appendChild(i);
+      });
+      card.querySelector('[data-role="total"]').textContent = total + (total>=100?'+':'');
+      card.querySelector('[data-role="active"]').textContent = days.length + 'd';
+    }).catch(function(){
+      var e = document.createElement('div');
+      e.className = 'err';
+      e.textContent = 'couldn\'t load activity';
+      card.appendChild(e);
+    });
+  }
+})();
+</script>
