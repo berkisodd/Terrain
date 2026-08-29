@@ -913,21 +913,18 @@
 
   } // end boot()
 
-  var liveRepo = new URLSearchParams(location.search).get('repo');
-  if(liveRepo){
-    REPO = liveRepo;
-    document.getElementById('brand-repo').textContent = 'Loading ' + liveRepo + '…';
-    fetchLive(liveRepo).then(function(res){
-      DATA = res.data;
-      GENERATED_AT = res.generatedAt;
-      boot();
-    }).catch(function(err){
-      document.getElementById('brand-repo').textContent = liveRepo + ' — failed to load';
-      document.getElementById('brand-range').textContent = err.message;
-      console.error(err);
-    });
-  } else {
+  var liveRepo = new URLSearchParams(location.search).get('repo') || REPO;
+  REPO = liveRepo;
+  document.getElementById('brand-repo').textContent = 'Loading ' + liveRepo + '…';
+  fetchLive(liveRepo).then(function(res){
+    DATA = res.data;
+    GENERATED_AT = res.generatedAt;
     boot();
-  }
+  }).catch(function(err){
+    document.getElementById('brand-repo').textContent = liveRepo + ' — failed to load';
+    document.getElementById('brand-range').textContent = err.message;
+    console.error(err);
+    boot(); // fall back to the baked-in snapshot below
+  });
 })();
 </script>
